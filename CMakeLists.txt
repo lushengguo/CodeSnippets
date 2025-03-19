@@ -20,11 +20,16 @@ endif()
 
 find_package(Boost REQUIRED)
 find_package(GTest REQUIRED)
+find_package(fmt REQUIRED)  # 添加 fmt 库
+find_package(spdlog REQUIRED)  # 添加 spdlog
+
 add_executable(${PROJECT_NAME} main.cpp)
 target_link_libraries(${PROJECT_NAME} 
     PRIVATE 
     Boost::boost
     GTest::gtest 
     GTest::gtest_main
+    fmt::fmt  # 链接 fmt 库
+    spdlog::spdlog  # 链接 spdlog
     pthread
 ) 

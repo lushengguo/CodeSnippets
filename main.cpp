@@ -1,5 +1,9 @@
 #include <array>
 #include <boost/asio.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/use_future.hpp>
 #include <functional>
 #include <future>
 #include <gtest/gtest.h>
@@ -59,7 +63,9 @@ public:
         [this, callback](const boost::system::error_code &ec,
                          std::size_t length) {
           if (ec) {
-            std::cerr << "Read failed: " << ec.message() << std::endl;
+            if (ec != boost::asio::error::operation_aborted) {
+              std::cerr << "Read failed: " << ec.message() << std::endl;
+            }
             return;
           }
           callback(std::span<uint8_t>(buffer_.data(), length));
@@ -113,7 +119,7 @@ private:
             return;
 
           if (!ec) {
-            std::cout << "Accepted connection" << std::endl;
+            // std::cout << "Accepted connection" << std::endl;
             active_sockets_ = socket;
 
             do_accept();
@@ -191,7 +197,7 @@ TEST(asio_practice, TestConnect) {
   cleanup_connection(runner, server, client);
 }
 
-TEST(asio_practice, TestSimpleTxRx) {
+TEST(asio_practice, TestSimpleWrite) {
   auto [runner, server, client, future] = setup_connection();
 
   auto status = future.wait_for(std::chrono::seconds(1));
@@ -210,6 +216,64 @@ TEST(asio_practice, TestSimpleTxRx) {
   auto len = boost::asio::write(*server->get_active_sockets(),
                                 boost::asio::buffer(test_message));
   EXPECT_EQ(len, test_message.size());
+
+  cleanup_connection(runner, server, client);
+}
+
+TEST(asio_practice, TestSimpleAsyncWrite) {
+  auto [runner, server, client, future] = setup_connection();
+
+  auto status = future.wait_for(std::chrono::seconds(1));
+  ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+  EXPECT_TRUE(future.get()) << "Connection failed";
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  client->read([](const std::span<uint8_t> &data) {
+    std::string received(reinterpret_cast<const char *>(data.data()),
+                         data.size());
+    EXPECT_EQ(received, "Hello from Server!");
+  });
+
+  std::string test_message = "Hello from Server!";
+  auto future2 = boost::asio::async_write(*server->get_active_sockets(),
+                                          boost::asio::buffer(test_message),
+                                          boost::asio::use_future);
+  EXPECT_EQ(future2.get(), test_message.size());
+
+  cleanup_connection(runner, server, client);
+}
+
+TEST(asio_practice, TestSimpleCoroutineWrite) {
+  auto [runner, server, client, future] = setup_connection();
+
+  auto status = future.wait_for(std::chrono::seconds(1));
+  ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+  EXPECT_TRUE(future.get()) << "Connection failed";
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  client->read([](const std::span<uint8_t> &data) {
+    std::string received(reinterpret_cast<const char *>(data.data()),
+                         data.size());
+    EXPECT_EQ(received, "Hello from Server!");
+  });
+
+  std::string test_message = "Hello from Server!";
+  std::promise<std::size_t> write_size_promise;
+  auto write_size_future = write_size_promise.get_future();
+
+  boost::asio::co_spawn(
+      runner->get_io_context(),
+      [&]() -> boost::asio::awaitable<void> {
+        auto bytes_written = co_await boost::asio::async_write(
+            *server->get_active_sockets(), boost::asio::buffer(test_message),
+            boost::asio::use_awaitable);
+        write_size_promise.set_value(bytes_written);
+      },
+      boost::asio::detached);
+
+  EXPECT_EQ(write_size_future.get(), test_message.size());
 
   cleanup_connection(runner, server, client);
 }

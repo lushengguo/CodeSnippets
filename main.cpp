@@ -58,8 +58,13 @@ public:
   }
 
   void read(std::function<void(const std::span<uint8_t> &)> callback) {
+    do_read(callback);
+  }
+
+private:
+  void do_read(std::function<void(const std::span<uint8_t> &)> callback) {
     boost::asio::async_read(
-        socket_, boost::asio::buffer(buffer_),
+        socket_, boost::asio::buffer(&payload_length_, sizeof(payload_length_)),
         [this, callback](const boost::system::error_code &ec,
                          std::size_t length) {
           if (ec) {
@@ -68,14 +73,33 @@ public:
             }
             return;
           }
-          callback(std::span<uint8_t>(buffer_.data(), length));
+
+          size_t payload_length = *reinterpret_cast<size_t *>(payload_length_);
+          payload_ = std::vector<uint8_t>(payload_length, 0);
+          boost::asio::async_read(
+              socket_, boost::asio::buffer(payload_.data(), payload_.size()),
+              [this, callback](const boost::system::error_code &ec,
+                               std::size_t length) {
+                if (ec) {
+                  if (ec != boost::asio::error::operation_aborted) {
+                    std::cerr << "Read failed: " << ec.message() << std::endl;
+                  }
+                  return;
+                }
+                if (callback) {
+                  callback(
+                      std::span<uint8_t>(payload_.data(), payload_.size()));
+                }
+
+                do_read(callback);
+              });
         });
   }
 
-private:
+  uint8_t payload_length_[8];
+  std::vector<uint8_t> payload_;
   boost::asio::ip::tcp::resolver resolver_;
   boost::asio::ip::tcp::socket socket_;
-  std::array<uint8_t, 1024> buffer_;
 };
 
 class AsioServer {
@@ -119,9 +143,7 @@ private:
             return;
 
           if (!ec) {
-            // std::cout << "Accepted connection" << std::endl;
             active_sockets_ = socket;
-
             do_accept();
           } else if (ec != boost::asio::error::operation_aborted) {
 
@@ -187,6 +209,15 @@ void cleanup_connection(std::shared_ptr<IoContextRunner> runner,
   runner->stop();
 }
 
+std::vector<uint8_t> create_payload(const std::string &message) {
+  size_t payload_length = message.size();
+  std::vector<uint8_t> payload(sizeof(payload_length) + message.size());
+  std::memcpy(payload.data(), &payload_length, sizeof(payload_length));
+  std::memcpy(payload.data() + sizeof(payload_length), message.data(),
+              message.size());
+  return payload;
+}
+
 TEST(asio_practice, TestConnect) {
   auto [runner, server, client, future] = setup_connection();
 
@@ -206,16 +237,21 @@ TEST(asio_practice, TestSimpleWrite) {
 
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-  client->read([](const std::span<uint8_t> &data) {
+  std::promise<void> read_complete;
+  auto read_future = read_complete.get_future();
+
+  client->read([&read_complete](const std::span<uint8_t> &data) {
     std::string received(reinterpret_cast<const char *>(data.data()),
                          data.size());
     EXPECT_EQ(received, "Hello from Server!");
+    read_complete.set_value();
   });
 
-  std::string test_message = "Hello from Server!";
-  auto len = boost::asio::write(*server->get_active_sockets(),
-                                boost::asio::buffer(test_message));
-  EXPECT_EQ(len, test_message.size());
+  std::string message = "Hello from Server!";
+  boost::asio::write(*server->get_active_sockets(),
+                     boost::asio::buffer(create_payload(message)));
+
+  read_future.get();
 
   cleanup_connection(runner, server, client);
 }
@@ -229,17 +265,24 @@ TEST(asio_practice, TestSimpleAsyncWrite) {
 
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-  client->read([](const std::span<uint8_t> &data) {
+  std::promise<void> read_complete;
+  auto read_future = read_complete.get_future();
+
+  client->read([&read_complete](const std::span<uint8_t> &data) {
     std::string received(reinterpret_cast<const char *>(data.data()),
                          data.size());
     EXPECT_EQ(received, "Hello from Server!");
+    read_complete.set_value();
   });
 
-  std::string test_message = "Hello from Server!";
-  auto future2 = boost::asio::async_write(*server->get_active_sockets(),
-                                          boost::asio::buffer(test_message),
-                                          boost::asio::use_future);
-  EXPECT_EQ(future2.get(), test_message.size());
+  std::string message = "Hello from Server!";
+  auto payload = create_payload(message);
+  auto write_future = boost::asio::async_write(*server->get_active_sockets(),
+                                               boost::asio::buffer(payload),
+                                               boost::asio::use_future);
+  EXPECT_EQ(write_future.get(), payload.size());
+
+  read_future.get();
 
   cleanup_connection(runner, server, client);
 }
@@ -253,27 +296,104 @@ TEST(asio_practice, TestSimpleCoroutineWrite) {
 
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-  client->read([](const std::span<uint8_t> &data) {
+  std::promise<void> read_complete;
+  auto read_future = read_complete.get_future();
+
+  client->read([&read_complete](const std::span<uint8_t> &data) {
     std::string received(reinterpret_cast<const char *>(data.data()),
                          data.size());
     EXPECT_EQ(received, "Hello from Server!");
+    read_complete.set_value();
   });
 
-  std::string test_message = "Hello from Server!";
+  std::string message = "Hello from Server!";
   std::promise<std::size_t> write_size_promise;
   auto write_size_future = write_size_promise.get_future();
 
+  auto payload = create_payload(message);
   boost::asio::co_spawn(
       runner->get_io_context(),
       [&]() -> boost::asio::awaitable<void> {
         auto bytes_written = co_await boost::asio::async_write(
-            *server->get_active_sockets(), boost::asio::buffer(test_message),
+            *server->get_active_sockets(), boost::asio::buffer(payload),
             boost::asio::use_awaitable);
         write_size_promise.set_value(bytes_written);
       },
       boost::asio::detached);
 
-  EXPECT_EQ(write_size_future.get(), test_message.size());
+  EXPECT_EQ(write_size_future.get(), payload.size());
+
+  read_future.get();
+
+  cleanup_connection(runner, server, client);
+}
+
+// no matter how large the message is, it will be written in one go
+TEST(asio_practice, TestAsyncWriteBulkOnce) {
+  auto [runner, server, client, future] = setup_connection();
+
+  auto status = future.wait_for(std::chrono::seconds(1));
+  ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+  EXPECT_TRUE(future.get()) << "Connection failed";
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  size_t total_size = 1024 * 1024 * 1024;
+  std::promise<void> read_complete;
+  auto read_future = read_complete.get_future();
+
+  client->read([&read_complete](const std::span<uint8_t> &data) {
+    read_complete.set_value();
+  });
+
+  std::string message(total_size, 'a');
+  auto payload = create_payload(message);
+  auto write_future = boost::asio::async_write(*server->get_active_sockets(),
+                                               boost::asio::buffer(payload),
+                                               boost::asio::use_future);
+  EXPECT_EQ(write_future.get(), payload.size());
+
+  read_future.get();
+
+  cleanup_connection(runner, server, client);
+}
+
+// no matter how large the message is, it will be written in one go
+TEST(asio_practice, TestCoroutineWriteBulkOnce) {
+  auto [runner, server, client, future] = setup_connection();
+
+  auto status = future.wait_for(std::chrono::seconds(1));
+  ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+  EXPECT_TRUE(future.get()) << "Connection failed";
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  size_t total_size = 1024 * 1024 * 1024;
+  std::promise<void> read_complete;
+  auto read_future = read_complete.get_future();
+
+  client->read([&read_complete](const std::span<uint8_t> &data) {
+    read_complete.set_value();
+  });
+
+  std::string message(total_size, 'a');
+    std::promise<std::size_t> write_size_promise;
+  auto write_size_future = write_size_promise.get_future();
+
+  auto payload = create_payload(message);
+  boost::asio::co_spawn(
+      runner->get_io_context(),
+      [&]() -> boost::asio::awaitable<void> {
+        auto bytes_written = co_await boost::asio::async_write(
+            *server->get_active_sockets(), boost::asio::buffer(payload),
+            boost::asio::use_awaitable);
+        write_size_promise.set_value(bytes_written);
+      },
+      boost::asio::detached);
+
+  EXPECT_EQ(write_size_future.get(), payload.size());
+
+  read_future.get();
 
   cleanup_connection(runner, server, client);
 }

@@ -4,6 +4,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 设置 Debug 编译选项
+set(CMAKE_BUILD_TYPE Debug)
+add_compile_options(-g)  # 添加调试信息
+add_compile_options(-O0) # 关闭优化
+
 # 添加协程支持
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-fcoroutines)

@@ -229,8 +229,7 @@ std::shared_ptr<spdlog::logger> setup_logger(const std::string &test_name)
 {
     std::filesystem::create_directories("logs");
     auto log_file = fmt::format("logs/{}.log", test_name);
-    auto logger = spdlog::basic_logger_mt(test_name, log_file,
-                                          true); // truncate existing file
+    auto logger = spdlog::basic_logger_mt(test_name, log_file, true);
     logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v");
     logger->set_level(spdlog::level::debug);
     return logger;
@@ -238,7 +237,7 @@ std::shared_ptr<spdlog::logger> setup_logger(const std::string &test_name)
 
 void cleanup_logs(const std::string &test_name)
 {
-    spdlog::drop(test_name); // remove logger from registry
+    spdlog::drop(test_name);
     auto log_file = fmt::format("logs/{}.log", test_name);
     std::filesystem::remove(log_file);
 }
@@ -289,7 +288,6 @@ std::vector<uint8_t> create_payload(const std::string &message)
     return payload;
 }
 
-// 辅助函数：等待连接建立
 bool wait_for_connection(std::future<bool> &future, const std::string &test_name)
 {
     auto logger = spdlog::get(test_name);
@@ -301,7 +299,6 @@ bool wait_for_connection(std::future<bool> &future, const std::string &test_name
     return success;
 }
 
-// 辅助函数：创建基本的读取验证器
 auto create_message_validator(const std::string &expected_message, std::promise<void> &read_complete,
                               const std::string &test_name)
 {
@@ -320,7 +317,6 @@ auto create_message_validator(const std::string &expected_message, std::promise<
         });
 }
 
-// 辅助函数：创建批量数据读取验证器
 auto create_bulk_validator(size_t message_length, size_t thread_count, size_t each_thread_write_count,
                            std::atomic_size_t &read_count, std::promise<bool> &read_complete,
                            const std::string &test_name, std::atomic_bool &stop)
@@ -375,7 +371,6 @@ auto create_bulk_validator(size_t message_length, size_t thread_count, size_t ea
         });
 }
 
-// 辅助函数：同步写入
 void sync_write(const std::shared_ptr<AsioServer> &server, const std::vector<uint8_t> &payload,
                 const std::string &test_name)
 {
@@ -385,7 +380,6 @@ void sync_write(const std::shared_ptr<AsioServer> &server, const std::vector<uin
     logger->info("Write operation completed");
 }
 
-// 辅助函数：异步写入
 void async_write(const std::shared_ptr<AsioServer> &server, const std::vector<uint8_t> &payload,
                  const std::string &test_name)
 {
@@ -397,7 +391,6 @@ void async_write(const std::shared_ptr<AsioServer> &server, const std::vector<ui
     logger->info("Write operation completed");
 }
 
-// 辅助函数：协程写入
 void coroutine_write(const std::shared_ptr<IoContextRunner> &runner, const std::shared_ptr<AsioServer> &server,
                      const std::vector<uint8_t> &payload, std::promise<std::size_t> &write_size_promise,
                      const std::string &test_name)
@@ -415,7 +408,6 @@ void coroutine_write(const std::shared_ptr<IoContextRunner> &runner, const std::
         boost::asio::detached);
 }
 
-// 辅助函数：多线程写入
 template <typename WriteFunc>
 void multi_thread_write(const std::shared_ptr<IoContextRunner> &runner, const std::shared_ptr<AsioServer> &server,
                         size_t message_length, size_t thread_count, size_t each_thread_write_count,
@@ -513,7 +505,7 @@ TEST(asio_practice, AsyncWriteBulkOnce)
     auto [runner, server, client, future] = setup_connection(test_name);
     ASSERT_TRUE(wait_for_connection(future, test_name));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    size_t message_length = 1024 * 1024; // 1MB
+    size_t message_length = 1024 * 1024;
     std::promise<void> read_complete;
     auto read_future = read_complete.get_future();
     std::string message(message_length, 'a');
@@ -601,6 +593,6 @@ TEST(asio_practice, CoroutineWriteMultithreadWithSingleThreadIoContext)
         },
         test_name);
     bool success = read_future.get();
-    EXPECT_FALSE(success); // This test is expected to fail
+    EXPECT_FALSE(success);
     cleanup_connection(runner, server, client, test_name);
 }

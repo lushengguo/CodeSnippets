@@ -181,6 +181,8 @@ static void BM_OptimizedOrderProcessing(benchmark::State &state)
             }
         }
     }
+    state.counters["avg_ns_per_order"] =
+        benchmark::Counter(state.iterations() * 1000, benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 }
 
 static void BM_UnoptimizedOrderProcessing(benchmark::State &state)
@@ -211,6 +213,8 @@ static void BM_UnoptimizedOrderProcessing(benchmark::State &state)
             }
         }
     }
+    state.counters["avg_ns_per_order"] =
+        benchmark::Counter(state.iterations() * 1000, benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 }
 
 static void BM_OptimizedOrderStatusUpdate(benchmark::State &state)
@@ -240,6 +244,8 @@ static void BM_OptimizedOrderStatusUpdate(benchmark::State &state)
             }
         }
     }
+    state.counters["avg_ns_per_order"] =
+        benchmark::Counter(state.iterations() * 1000, benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 }
 
 static void BM_UnoptimizedOrderStatusUpdate(benchmark::State &state)
@@ -269,6 +275,8 @@ static void BM_UnoptimizedOrderStatusUpdate(benchmark::State &state)
             }
         }
     }
+    state.counters["avg_ns_per_order"] =
+        benchmark::Counter(state.iterations() * 1000, benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 }
 
 BENCHMARK(BM_OptimizedOrderProcessing);
